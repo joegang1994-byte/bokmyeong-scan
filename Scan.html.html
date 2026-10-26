@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>출장복명서 QR 접수</title>
+<style>
+  body { font-family: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; margin: 0; background: #f5f6f8; color: #111; }
+  header { background: #1f3a8a; color: #fff; padding: 14px 16px; font-weight: 700; font-size: 17px; display: flex; justify-content: space-between; align-items: center; }
+  header button { background: none; border: 1px solid #93a4d6; color: #fff; border-radius: 6px; padding: 4px 10px; font-size: 13px; }
+  .wrap { max-width: 560px; margin: auto; padding: 12px; }
+  .card { background: #fff; border: 1px solid #d9dce1; border-radius: 12px; padding: 16px; margin-bottom: 12px; text-align: center; }
+  .big { font-size: 30px; font-weight: 800; margin: 2px 0 8px; }
+  .sub { font-size: 15px; color: #444; line-height: 1.6; }
+  .info { margin-top: 12px; padding: 10px 12px; background: #f8fafc; border-radius: 8px; text-align: left; font-size: 15px; line-height: 1.8; }
+  .info b { display: inline-block; width: 74px; color: #64748b; font-weight: 600; }
+  .ok { border: 3px solid #16a34a; background: #f0fdf4; } .ok .big { color: #166534; }
+  .dup { border: 3px solid #d97706; background: #fffbeb; } .dup .big { color: #b45309; }
+  .bad { border: 3px solid #dc2626; background: #fef2f2; } .bad .big { color: #b91c1c; }
+  .load .big, .idle .big { color: #1f3a8a; }
+  .btn { display: block; width: 100%; padding: 14px; font-size: 16px; border: 0; border-radius: 8px; margin-top: 10px; box-sizing: border-box; text-align: center; text-decoration: none; }
+  .ghost { background: #fff; border: 1px solid #1f3a8a; color: #1f3a8a; }
+  .primary { background: #1f3a8a; color: #fff; }
+  .danger { background: #fff; border: 1px solid #b91c1c; color: #b91c1c; }
+  input[type=text], input[type=password], input:not([type]) { width: 100%; box-sizing: border-box; padding: 12px; font-size: 16px; border: 1px solid #c8ccd2; border-radius: 6px; margin-top: 6px; }
+  .muted { color: #6b7280; font-size: 13px; line-height: 1.6; text-align: left; }
+  h3 { margin: 0 0 8px; font-size: 15px; text-align: left; }
+  video { width: 100%; max-height: 46vh; background: #000; border-radius: 8px; display: none; object-fit: cover; }
+  .log { text-align: left; font-size: 13px; line-height: 1.7; max-height: 180px; overflow: auto; }
+  .log .g { color: #166534; } .log .a { color: #b45309; } .log .r { color: #b91c1c; }
+  .warn { background: #fffbeb; border-color: #f59e0b; color: #92400e; font-size: 13px; line-height: 1.6; text-align: left; }
+  .diag { margin-top: 8px; font-size: 12px; color: #6b7280; word-break: break-all; }
+</style>
+</head>
+<body data-id="<?= initId ?>" data-rev="<?= initRev ?>" data-page="<?= scanPage ?>">
+<header><span>출장복명서 QR 접수</span><span><span id="cnt"></span> <button type="button" onclick="toggleSettings()">설정</button></span></header>
+<div class="wrap">
+  <div class="card" id="setCard" style="display:none">
+    <h3>처음 한 번만 설정</h3>
+    <div id="apiRow">
+      <label class="muted">접수 API 주소 (Apps Script 웹앱 주소, …/exec)</label>
+      <input id="apiIn" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+    </div>
+    <label class="muted">접수 비밀번호</label>
+    <input id="pinIn" type="password" placeholder="입학사무실 접수 비밀번호" autocomplete="off">
+    <button class="btn primary" type="button" onclick="saveSettings()">저장</button>
+    <button class="btn ghost" type="button" onclick="checkConn()">연결 확인</button>
+    <p class="muted" id="connMsg">이 기기에만 저장됩니다.</p>
+  </div>
+
+  <div id="gasWarn" class="card warn" style="display:none">
+    이 화면(구글 Apps Script 주소)에서는 브라우저 정책에 따라 <b>실시간 카메라가 열리지 않습니다.</b><br>
+    아래 <b>[실시간 스캔 페이지 열기]</b>로 이동하거나, <b>[📸 QR 사진 찍어 접수]</b>를 쓰세요.
+    <a id="extLink" class="btn ghost" style="display:none" target="_top">실시간 스캔 페이지 열기</a>
+  </div>
+
+  <div id="card" class="card idle"><div class="big">대기 중</div><div class="sub">[카메라 스캔 시작]을 눌러 주세요</div></div>
+  <div id="acts"></div>
+
+  <div class="card">
+    <video id="vid" playsinline muted></video>
+    <canvas id="cv" style="display:none"></canvas>
+    <button class="btn primary" id="camBtn" type="button" onclick="toggleCam()">📷 카메라 스캔 시작 (자동 접수)</button>
+    <button class="btn ghost" type="button" onclick="document.getElementById('photoIn').click()">📸 QR 사진 찍어 접수</button>
+    <button class="btn ghost" type="button" onclick="document.getElementById('photoIn2').click()">🖼 앨범에서 사진 선택</button>
+    <input id="photoIn" type="file" accept="image/*" capture="environment" style="display:none" onchange="onPhoto(event)">
+    <input id="photoIn2" type="file" accept="image/*" style="display:none" onchange="onPhoto(event)">
+    <p class="muted" id="camMsg">종이의 QR이 인식되면 화면을 누르지 않아도 자동으로 접수되고, 카메라는 계속 켜져 있어 다음 종이를 바로 비추면 됩니다.</p>
+  </div>
+
+  <div class="card">
+    <h3>직접 입력 / 바코드 리더기</h3>
+    <input id="code" placeholder="제출번호 입력 또는 스캐너 입력 (예: 260908-0001)" autocomplete="off">
+    <button class="btn ghost" type="button" onclick="manual()">접수</button>
+  </div>
+
+  <div class="card"><h3>이 화면에서 접수한 내역</h3><div class="log" id="log">아직 없습니다.</div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js" async></script>
+<script>
+const $ = id => document.getElementById(id);
+// Apps Script 안에서 열렸는지(google.script.run 사용) / 외부 주소에서 열렸는지(fetch 사용) 자동 구분
+const IN_GAS = typeof google !== 'undefined' && !!(google.script && google.script.run);
+let api = '', pin = '';
+try { api = localStorage.getItem('sc_api') || ''; pin = localStorage.getItem('sc_pin') || ''; } catch (e) {}
+let cur = null, curReq = null, busy = false;
+let stream = null, timer = null, detector = null, wake = null, actx = null;
+let last = { code: '', at: 0 };
+let okCount = 0;
+const logs = [];
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// 전각 숫자(１２３)·앞뒤 공백을 정리한 비밀번호
+function normPin(v) {
+  return String(v == null ? '' : v).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).trim();
+}
+// 치환되지 않은 템플릿 표시는 빈 값으로 처리 (이 파일에는 꺾쇠+물음표를 붙여 쓰면 안 됨)
+function cleanTpl(v) {
+  v = String(v || '');
+  return (v.charAt(0) === String.fromCharCode(60) && v.charAt(1) === String.fromCharCode(63)) ? '' : v;
+}
+function beep(ok) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.connect(g); g.connect(actx.destination);
+    o.frequency.value = ok ? 880 : 300; g.gain.value = 0.15;
+    o.start(); o.stop(actx.currentTime + (ok ? 0.12 : 0.4));
+  } catch (e) {}
+}
+function hhmm() {
+  const d = new Date();
+  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+}
+// 설정이 끝났는지: Apps Script 안에서는 PIN 없이도(로그인 계정으로) 가능, 외부에서는 API 주소+PIN 필요
+function ready() { return IN_GAS ? true : !!(api && pin); }
+
+/* ---------- 설정 ---------- */
+function toggleSettings(force) {
+  const c = $('setCard');
+  c.style.display = (force === true || c.style.display === 'none') ? 'block' : 'none';
+  $('apiIn').value = api; $('pinIn').value = pin;
+}
+function saveSettings() {
+  pin = normPin($('pinIn').value);
+  if (!IN_GAS) {
+    api = $('apiIn').value.trim();
+    if (!/^https:\/\/script\.google\.com\/.+\/exec/.test(api)) { alert('API 주소는 https://script.google.com/…/exec 형태여야 합니다.'); return; }
+    if (!pin) { alert('접수 비밀번호를 입력하세요.'); return; }
+  }
+  try { localStorage.setItem('sc_api', api); localStorage.setItem('sc_pin', pin); } catch (e) {}
+  $('setCard').style.display = 'none';
+  // 방금 '권한 없음'으로 거부된 접수가 있으면 새 비밀번호로 자동 재시도
+  if (curReq && cur && cur.status === 'deny') receive(curReq.id, curReq.rev, false);
+}
+function checkConn() {
+  pin = normPin($('pinIn').value);
+  if (!IN_GAS) api = $('apiIn').value.trim();
+  $('connMsg').textContent = '확인 중...';
+  call({ op: 'ping' }).then(r => {
+    let m;
+    if (!r || r.status !== 'pong') m = '서버 응답이 이상합니다. 웹앱을 "새 버전"으로 다시 배포했는지 확인하세요. (' + (r && r.message ? r.message : '응답 없음') + ')';
+    else if (r.locked) m = '비밀번호를 여러 번 틀려 잠겼습니다. 10분 뒤 다시 시도하거나, 관리자가 시트 메뉴 [접수 비밀번호 잠금 해제]를 실행하세요.';
+    else if (r.ok) m = '✔ 연결 정상 · 접수 권한 있음' + (r.account ? ' (' + r.account + ')' : '');
+    else if (!r.pinSet) m = '연결은 되었지만 서버(code.gs)의 SCAN_PIN이 비어 있습니다. SCAN_PIN을 입력하고 새 버전으로 배포하세요.';
+    else if (r.pinGiven) m = '연결은 되었지만 입력한 비밀번호가 서버의 SCAN_PIN과 다릅니다. (code.gs의 SCAN_PIN 값을 확인하세요)';
+    else m = '연결은 되었습니다. 접수 비밀번호를 입력해 주세요.';
+    $('connMsg').textContent = m;
+  }).catch(e => {
+    $('connMsg').textContent = '서버에 연결하지 못했습니다. (' + (e && e.message ? e.message : e) + ') ' +
+      (IN_GAS ? '' : 'API 주소와, 배포의 "액세스 권한: 모든 사용자" 설정을 확인하세요.');
+  });
+}
+
+/* ---------- 서버 호출 ---------- */
+function call(body) {
+  if (IN_GAS) {
+    return new Promise((resolve, reject) => {
+      const r = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      if (body.op === 'undo') r.scanUndo(body.id, pin);
+      else if (body.op === 'ping') r.scanPing(pin);
+      else r.scanReceive(body.id, body.rev, !!body.force, pin);
+    });
+  }
+  if (!ready() && body.op !== 'ping') { toggleSettings(true); return Promise.reject(new Error('먼저 설정(API 주소, 접수 비밀번호)을 입력하세요.')); }
+  if (!api) return Promise.reject(new Error('API 주소를 입력하세요.'));
+  body.pin = pin;
+  // 본문을 문자열로 보내면 text/plain 이라 사전 요청(CORS preflight) 없이 전송됨
+  return fetch(api, { method: 'POST', body: JSON.stringify(body) }).then(r => r.json());
+}
+
+/* ---------- 결과 표시 ---------- */
+function denyText(res) {
+  if (res.locked) return '비밀번호를 여러 번 틀려 <b>10분간 잠겼습니다.</b><br>잠시 뒤 다시 시도하거나, 관리자가 시트 메뉴 [접수 비밀번호 잠금 해제]를 실행하세요.';
+  if (res.pinEnabled === false) return '서버(code.gs)의 <b>SCAN_PIN이 비어 있습니다.</b><br>SCAN_PIN을 입력하고 새 버전으로 배포하세요.';
+  if (res.pinWrong) return '입력한 <b>접수 비밀번호가 서버의 SCAN_PIN과 다릅니다.</b><br>[설정]에서 다시 입력하면 자동으로 다시 접수합니다.';
+  return '<b>접수 비밀번호가 입력되지 않았습니다.</b><br>[설정]에서 비밀번호를 입력하고 저장하면 자동으로 다시 접수합니다.';
+}
+function show(res) {
+  cur = res;
+  const M = {
+    ok:     ['ok',  '✔ 접수 완료', '복명서 접수가 기록되었습니다.', 'g'],
+    dup:    ['dup', '이미 접수됨', '이 복명서는 ' + esc(res.at) + '에 이미 접수되었습니다.', 'a'],
+    old:    ['bad', '이전 수정본 종이', '선생님이 제출 후 수정한 복명서입니다.<br>종이는 수정 ' + esc(res.paperRev) + '회차, 최신은 수정 ' + esc(res.curRev) + '회차입니다.<br>최신 출력본을 받는 것이 원칙입니다.', 'r'],
+    cancel: ['bad', '취소된 복명서', '제출이 취소된 복명서입니다. 접수하지 않았습니다.', 'r'],
+    none:   ['bad', '찾을 수 없음', '제출번호 ' + esc(res.id) + '에 해당하는 복명서가 없습니다.', 'r'],
+    deny:   ['bad', '접수 권한 없음', denyText(res), 'r'],
+    undo:   ['dup', '접수 취소됨', '접수 체크를 해제했습니다.', 'a']
+  }[res.status] || ['bad', '오류', esc(res.message || '알 수 없는 오류'), 'r'];
+  let html = '<div class="big">' + M[1] + '</div><div class="sub">' + M[2] + '</div>';
+  if (res.school) {
+    html += '<div class="info"><b>학교</b>' + esc(res.school) + '<br><b>출장교사</b>' + esc(res.teacher) +
+      '<br><b>출장일</b>' + esc(res.trip) + '<br><b>학생수</b>' + esc(res.count) + '명<br><b>제출번호</b>' + esc(res.id) + '</div>';
+  }
+  $('card').className = 'card ' + M[0];
+  $('card').innerHTML = html;
+  let acts = '';
+  if (res.status === 'ok' || res.status === 'dup') acts += '<button class="btn danger" type="button" onclick="undo()">잘못 찍음 · 접수 취소</button>';
+  if (res.status === 'old') acts += '<button class="btn ghost" type="button" onclick="forceRecv()">이 종이 그대로 접수</button>';
+  if (res.status === 'deny') acts += '<button class="btn primary" type="button" onclick="toggleSettings(true)">비밀번호 입력하기</button>';
+  $('acts').innerHTML = acts;
+  if (res.status === 'deny') toggleSettings(true);
+  if (res.status === 'ok') { okCount++; $('cnt').textContent = '접수 ' + okCount + '건'; }
+  if (res.school) logs.unshift('<div class="' + M[3] + '">' + hhmm() + ' · ' + esc(res.school) + ' ' + esc(res.teacher) + ' · ' + M[1] + '</div>');
+  if (logs.length > 30) logs.pop();
+  $('log').innerHTML = logs.length ? logs.join('') : '아직 없습니다.';
+  beep(res.status === 'ok');
+  if (navigator.vibrate) navigator.vibrate(res.status === 'ok' ? 150 : [120, 80, 120]);
+}
+function fail(err) {
+  busy = false;
+  show({ status: 'error', message: '서버에 연결하지 못했습니다. (' + (err && err.message ? err.message : err) + ')' });
+}
+
+function receive(id, rev, force) {
+  busy = true;
+  curReq = { id: id, rev: rev };
+  $('card').className = 'card load';
+  $('card').innerHTML = '<div class="big">접수 중...</div><div class="sub">' + esc(id) + '</div>';
+  $('acts').innerHTML = '';
+  call({ op: 'receive', id: id, rev: rev, force: !!force })
+    .then(r => { busy = false; show(r); }).catch(fail);
+}
+function undo() {
+  if (!cur || !cur.id) return;
+  if (!confirm('이 복명서의 접수를 취소할까요?')) return;
+  busy = true;
+  call({ op: 'undo', id: cur.id }).then(r => { busy = false; show(r); }).catch(fail);
+}
+function forceRecv() {
+  if (!curReq) return;
+  if (!confirm('이전 수정본 종이를 그대로 접수할까요?\n(비고에 "이전 수정본 접수"가 기록됩니다)')) return;
+  receive(curReq.id, curReq.rev, true);
+}
+
+/* ---------- 코드 해석 ----------
+   QR 내용: '260908-0001|0' (제출번호|수정횟수) 또는 접수 주소(…?scan=260908-0001&r=0) 둘 다 인식 */
+function parse(v, strict) {
+  v = String(v || '').trim();
+  const m = v.match(/(\d{6}-\d{4,})/);
+  if (m) {
+    const r = v.match(/[?&]r=(\d+)/) || v.match(/\|\s*(\d+)\s*$/);
+    return { id: m[1], rev: r ? r[1] : '' };
+  }
+  if (strict) return { id: '', rev: '' };
+  return { id: v.replace(/[^0-9A-Za-z\-]/g, ''), rev: '' };
+}
+function manual() {
+  const p = parse($('code').value, false);
+  if (!p.id) { alert('제출번호를 입력하거나 스캔하세요.'); return; }
+  $('code').value = '';
+  receive(p.id, p.rev, false);
+}
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') manual(); });
+
+/* ---------- QR 해석 공통 ---------- */
+function camMsg(t) { $('camMsg').innerHTML = t; }
+function waitFor(cond, ms) {
+  return new Promise(res => {
+    if (cond()) return res(true);
+    let n = 0;
+    const t = setInterval(() => {
+      if (cond()) { clearInterval(t); res(true); }
+      else if (++n * 150 > ms) { clearInterval(t); res(false); }
+    }, 150);
+  });
+}
+// jsQR 로드: 기본 CDN 실패 시 다른 CDN으로 한 번 더 시도
+async function loadJsQR() {
+  if (window.jsQR) return true;
+  if (await waitFor(() => !!window.jsQR, 3000)) return true;
+  await new Promise(res => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+    s.onload = res; s.onerror = res;
+    document.head.appendChild(s);
+  });
+  return waitFor(() => !!window.jsQR, 4000);
+}
+
+/* ---------- 사진으로 접수 ---------- */
+const pause = () => new Promise(r => setTimeout(r, 0));
+async function decodeImage(img) {
+  // 1) 브라우저 내장 해석기를 원본 사진 그대로 시도
+  if ('BarcodeDetector' in window) {
+    try {
+      const d = new BarcodeDetector({ formats: ['qr_code'] });
+      const c = await d.detect(img);
+      if (c && c.length) return c[0].rawValue;
+    } catch (e) {}
+  }
+  if (!(await loadJsQR())) return '';
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const cv = $('cv');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  const tryRect = (sx, sy, sw, sh, maxSide) => {
+    const s = Math.min(1, maxSide / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * s)), h = Math.max(1, Math.round(sh * s));
+    cv.width = w; cv.height = h;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h);
+    const q = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
+    return q ? q.data : '';
+  };
+  // 2) 전체 사진을 여러 크기로
+  for (const m of [1600, 2400, 1000]) {
+    const r = tryRect(0, 0, W, H, m);
+    if (r) return r;
+    await pause();
+  }
+  // 3) 사진 일부(가운데·네 모서리)를 확대해서
+  const tiles = [[0.25, 0.25, 0.5, 0.5], [0.15, 0.15, 0.7, 0.7], [0, 0, 0.6, 0.6], [0.4, 0, 0.6, 0.6], [0, 0.4, 0.6, 0.6], [0.4, 0.4, 0.6, 0.6]];
+  for (const t of tiles) {
+    for (const m of [1400, 900]) {
+      const r = tryRect(W * t[0], H * t[1], W * t[2], H * t[3], m);
+      if (r) return r;
+      await pause();
+    }
+  }
+  return '';
+}
+async function onPhoto(ev) {
+  const f = ev.target.files && ev.target.files[0];
+  ev.target.value = '';
+  if (!f) return;
+  if (!('BarcodeDetector' in window) && !(await loadJsQR())) {
+    camMsg('QR 해석 도구를 불러오지 못했습니다. 인터넷(또는 학교 네트워크 차단)을 확인하세요. 아래 [직접 입력]으로 제출번호를 입력해도 접수됩니다.');
+    return;
+  }
+  camMsg('사진에서 QR을 찾는 중... (몇 초 걸릴 수 있습니다)');
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = async () => {
+    URL.revokeObjectURL(url);
+    let raw = '';
+    try { raw = await decodeImage(img); } catch (e) {}
+    const p = raw ? parse(raw, true) : { id: '' };
+    if (!p.id) {
+      camMsg('QR을 찾지 못했습니다 (' + img.naturalWidth + '×' + img.naturalHeight + ').<br>' +
+        '· QR이 화면 가운데에 크게 나오도록 가까이서, 초점이 맞은 뒤 찍어 주세요.<br>' +
+        '· 종이가 구겨지거나 빛이 반사되지 않게 해 주세요.<br>' +
+        '· 계속 안 되면 아래 [직접 입력]에 종이 위쪽의 제출번호를 입력하세요.');
+      return;
+    }
+    camMsg('QR을 인식했습니다.');
+    receive(p.id, p.rev, false);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); camMsg('사진을 읽지 못했습니다. 다시 시도해 주세요.'); };
+  img.src = url;
+}
+
+/* ---------- 카메라 연속 스캔 ---------- */
+function policyBlocked() {
+  try {
+    const pp = document.permissionsPolicy || document.featurePolicy;
+    return !!(pp && pp.allowsFeature && !pp.allowsFeature('camera'));
+  } catch (e) { return false; }
+}
+function inAppBrowser() {
+  return /KAKAOTALK|NAVER\(inapp|DaumApps|Instagram|FBAN|FBAV|Line\/|; wv\)/i.test(navigator.userAgent || '');
+}
+async function diagText() {
+  const o = [];
+  o.push('보안연결 ' + (window.isSecureContext ? '예' : '아니오'));
+  o.push(IN_GAS ? 'Apps Script 주소' : '외부 주소');
+  o.push('화면 ' + (window.top === window ? '최상위' : '내장(iframe)'));
+  try {
+    const pp = document.permissionsPolicy || document.featurePolicy;
+    if (pp && pp.allowsFeature) o.push('카메라 정책 ' + (pp.allowsFeature('camera') ? '허용' : '차단'));
+  } catch (e) {}
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      const s = await navigator.permissions.query({ name: 'camera' });
+      o.push('카메라 권한 ' + s.state);
+    }
+  } catch (e) {}
+  if (inAppBrowser()) o.push('앱 내장 브라우저');
+  return o.join(' · ');
+}
+async function camFail(e) {
+  const name = (e && e.name) || '';
+  let h = '카메라를 열 수 없습니다 (' + esc(name || '알 수 없음') + (e && e.message ? ': ' + esc(e.message) : '') + ').<br>';
+  if (inAppBrowser()) {
+    h += '카카오톡·네이버 같은 <b>앱 안의 브라우저</b>입니다. 메뉴에서 <b>Chrome/Safari로 열기</b>를 눌러 다시 시도하세요.';
+  } else if (policyBlocked() || (IN_GAS && (name === 'NotAllowedError' || name === 'SecurityError'))) {
+    h += '이 화면(Apps Script 안)에서는 브라우저 정책으로 카메라가 막힌 것으로 보입니다 (사이트 권한 설정과 무관).<br>' +
+      '<b>외부 스캔 페이지</b>(GitHub Pages 등)에서 열면 해결됩니다. 급하면 <b>[📸 QR 사진 찍어 접수]</b>를 쓰세요.';
+  } else if (name === 'NotAllowedError') {
+    h += '카메라 권한이 거부된 상태입니다. 주소창 왼쪽 자물쇠 → 카메라 허용 후 새로고침하세요. 휴대폰이면 기기 설정에서 해당 브라우저의 카메라 권한도 확인하세요.';
+  } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    h += '사용할 수 있는 카메라를 찾지 못했습니다.';
+  } else if (name === 'NotReadableError') {
+    h += '다른 앱이나 탭이 카메라를 사용 중입니다. 종료한 뒤 다시 시도하세요.';
+  } else {
+    h += '[📸 QR 사진 찍어 접수]를 이용해 주세요.';
+  }
+  h += '<div class="diag">진단: ' + esc(await diagText()) + '</div>';
+  camMsg(h);
+}
+async function startCam() {
+  if (stream) return;
+  // [수정] Apps Script 화면에서는 카메라가 막히므로 외부 스캔 페이지로 바로 안내
+  if (IN_GAS) {
+    const page = cleanTpl(document.body.dataset.page);
+    if (page) {
+      if (confirm('이 화면(Apps Script)에서는 실시간 카메라가 열리지 않습니다.\n외부 스캔 페이지로 이동할까요?')) {
+        window.open(page, '_top');
+      }
+      return;
+    }
+  }
+  if (!ready()) { toggleSettings(true); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    camMsg('이 브라우저에서는 실시간 카메라를 쓸 수 없습니다. 주소가 https:// 인지 확인하거나 [📸 QR 사진 찍어 접수]를 이용하세요.' +
+      '<div class="diag">진단: ' + esc(await diagText()) + '</div>');
+    return;
+  }
+  const tries = [
+    { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+    { video: { facingMode: 'environment' }, audio: false },
+    { video: true, audio: false }
+  ];
+  let err = null;
+  for (const c of tries) {
+    try { stream = await navigator.mediaDevices.getUserMedia(c); err = null; break; }
+    catch (e) { err = e; stream = null; if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) break; }
+  }
+  if (!stream) { await camFail(err); return; }
+  const v = $('vid');
+  v.srcObject = stream;
+  v.style.display = 'block';
+  try { await v.play(); } catch (e) {}
+  detector = null;
+  if ('BarcodeDetector' in window) {
+    try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; }
+  }
+  if (!detector && !(await loadJsQR())) {
+    camMsg('QR 해석 도구를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.');
+    stopCam();
+    return;
+  }
+  try { if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+  $('camBtn').textContent = '⏹ 카메라 스캔 중지';
+  camMsg('QR을 화면에 비추세요. 인식되면 자동으로 접수됩니다.');
+  beep(true);
+  tick();
+}
+function stopCam() {
+  clearTimeout(timer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  try { if (wake) wake.release(); } catch (e) {}
+  wake = null;
+  $('vid').style.display = 'none';
+  $('camBtn').textContent = '📷 카메라 스캔 시작 (자동 접수)';
+}
+function toggleCam() { if (stream) stopCam(); else startCam(); }
+
+async function tick() {
+  if (!stream) return;
+  const v = $('vid');
+  if (!busy && v.readyState >= 2 && v.videoWidth) {
+    try {
+      let raw = '';
+      if (detector) {
+        const c = await detector.detect(v);
+        if (c && c.length) raw = c[0].rawValue;
+      } else if (window.jsQR) {
+        const cv = $('cv');
+        const w = Math.min(v.videoWidth, 800);
+        const h = Math.round(v.videoHeight * w / v.videoWidth);
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(v, 0, 0, w, h);
+        const q = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+        if (q) raw = q.data;
+      }
+      if (raw) handleRaw(raw);
+    } catch (e) {}
+  }
+  timer = setTimeout(tick, 220);
+}
+function handleRaw(raw) {
+  const p = parse(raw, true);
+  if (!p.id) return;
+  const code = p.id + '|' + p.rev;
+  const now = Date.now();
+  const same = code === last.code && now - last.at < 3000;
+  last = { code: code, at: now };
+  if (same) return;
+  receive(p.id, p.rev, false);
+}
+
+/* ---------- 시작 ---------- */
+(function init() {
+  const b = document.body;
+  let initId = cleanTpl(b.dataset.id), initRev = cleanTpl(b.dataset.rev);
+  const page = cleanTpl(b.dataset.page);
+  pin = normPin(pin);
+  if (!IN_GAS) {
+    $('apiRow').style.display = 'block';
+    const q = new URLSearchParams(location.search);          // 외부 주소: 주소창의 ?scan=…&r=…
+    if (q.get('scan')) { initId = q.get('scan'); initRev = q.get('r') || ''; }
+  } else {
+    $('apiRow').style.display = 'none';
+    $('gasWarn').style.display = 'block';
+    if (page) { $('extLink').href = page; $('extLink').style.display = 'block'; }
+  }
+  if (!ready()) toggleSettings(true);
+  else if (initId) receive(initId.replace(/[^0-9A-Za-z\-]/g, ''), initRev, false);   // QR 주소로 들어온 경우 자동 접수
+})();
+</script>
+</body>
+</html>
